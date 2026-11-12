@@ -67,12 +67,42 @@ for key, default in (("watchlist", ["AAPL", "MSFT", "NVDA", "TSLA", "SPY"]),
         st.session_state[key] = load(f"{key}.json", default)
 
 
-@st.cache_data(ttl=15)
-def price_change(ticker):
+import urllib.request
+
+
+def finnhub_key():
     try:
-        closes = yf.Ticker(ticker).history(period="5d")["Close"].dropna()
-        price, prev = closes.iloc[-1], closes.iloc[-2]
-        return float(price), float((price - prev) / prev * 100)
+        return st.secrets["FINNHUB_KEY"]
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=5)
+def finnhub_quote(ticker, key):
+    url = f"https://finnhub.io/api/v1/quote?symbol={ticker}&token={key}"
+    with urllib.request.urlopen(url, timeout=5) as r:
+        q = json.loads(r.read())
+    if not q.get("c") or not q.get("pc"):
+        raise ValueError("no quote")
+    return float(q["c"]), float((q["c"] - q["pc"]) / q["pc"] * 100)
+
+
+@st.cache_data(ttl=15)
+def yahoo_quote(ticker):
+    closes = yf.Ticker(ticker).history(period="5d")["Close"].dropna()
+    price, prev = closes.iloc[-1], closes.iloc[-2]
+    return float(price), float((price - prev) / prev * 100)
+
+
+def price_change(ticker):
+    key = finnhub_key()
+    if key and ticker.isalpha():
+        try:
+            return finnhub_quote(ticker, key)
+        except Exception:
+            pass
+    try:
+        return yahoo_quote(ticker)
     except Exception:
         return None, None
 
@@ -254,7 +284,7 @@ def market_bar():
     st.caption(f"🟢 Live · updated {time.strftime('%H:%M:%S')}")
 
 
-@st.fragment(run_every=15)
+@st.fragment(run_every=10)
 def watchlist_panel():
     for ticker in st.session_state.watchlist:
         tile(st, ticker, ticker)
